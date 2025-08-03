@@ -1,3 +1,5 @@
+#ultrastar_generator.py
+
 #!/usr/bin/env python3
 """
 UltraStar Deluxe Karaoke File Generator - Überarbeitete Version
@@ -6,6 +8,7 @@ Basierend auf Analyse von funktionierenden UltraStar-Dateien
 
 import os
 import numpy as np
+from numpy import ndarray
 import librosa
 from pathlib import Path
 import argparse

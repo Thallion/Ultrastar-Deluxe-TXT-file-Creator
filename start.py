@@ -159,7 +159,8 @@ def main():
             break
         
         else:
-            print("❌ Ungültige Auswahl. Bitte 1, 2 oder 3 eingeben.")
+            print("❌ Ungültige Auswahl. Bitte 1, 2 oder 3" \
+            "eingeben.")
 
 if __name__ == "__main__":
     try:

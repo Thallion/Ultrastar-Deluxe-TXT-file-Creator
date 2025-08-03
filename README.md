@@ -22,7 +22,8 @@ Ein fortschrittliches Tool zur automatischen Generierung von UltraStar Deluxe Ka
 
 ### 1. Repository klonen
 ```bash
-git clone https://github.com/yourusername/ultrastar-generator.git
+git clone https://https://github.com/Thallion/Ultrastar-Deluxe-TXT-file-Creator
+.git
 cd ultrastar-generator
 ```
 
