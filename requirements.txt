@@ -1,0 +1,130 @@
+# requirements.txt
+# UltraStar Deluxe Karaoke Generator Dependencies
+
+# Audio Processing
+librosa>=0.10.0
+numpy>=1.21.0
+
+# GUI Framework
+kivymd>=1.1.1
+kivy>=2.1.0
+
+# Optional: Bessere Vocal Separation
+# spleeter>=2.3.0
+# demucs>=4.0.0
+
+# Development/Testing
+# pytest>=7.0.0
+# black>=22.0.0
+
+---
+
+# setup.py (Optional für Package Installation)
+from setuptools import setup, find_packages
+
+setup(
+    name="ultrastar-generator",
+    version="1.0.0",
+    description="UltraStar Deluxe Karaoke File Generator with GUI",
+    author="Your Name",
+    packages=find_packages(),
+    install_requires=[
+        "librosa>=0.10.0",
+        "numpy>=1.21.0",
+        "kivymd>=1.1.1",
+        "kivy>=2.1.0",
+    ],
+    extras_require={
+        "advanced": [
+            "spleeter>=2.3.0",
+            "demucs>=4.0.0",
+        ]
+    },
+    entry_points={
+        "console_scripts": [
+            "ultrastar-gui=ultrastar_gui:main",
+            "ultrastar-cli=ultrastar_generator:main",
+        ]
+    },
+    python_requires=">=3.8",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: End Users/Desktop",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3.8+",
+    ],
+)
+
+---
+
+# Installation Instructions
+
+## Quick Start
+
+1. **Dependencies installieren:**
+```bash
+pip install -r requirements.txt
+```
+
+2. **GUI starten:**
+```bash
+python ultrastar_gui.py
+```
+
+3. **CLI verwenden:**
+```bash
+python ultrastar_generator.py song.mp3 --lyrics lyrics.txt
+```
+
+## System Requirements
+
+- Python 3.8+
+- FFmpeg (für Audio-Verarbeitung)
+- Mindestens 4GB RAM
+- Audio-Dateien: MP3, WAV, FLAC, M4A, OGG
+
+## FFmpeg Installation
+
+**Windows:**
+- Download von https://ffmpeg.org/download.html
+- Zur PATH Variable hinzufügen
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install ffmpeg
+```
+
+## Advanced Features (Optional)
+
+Für bessere Vocal Separation:
+
+```bash
+# Spleeter (TensorFlow-basiert)
+pip install spleeter
+
+# Oder Demucs (PyTorch-basiert)
+pip install demucs
+```
+
+## Troubleshooting
+
+**Problem: KivyMD Import Error**
+```bash
+pip install --upgrade kivymd kivy
+```
+
+**Problem: Audio Loading Error**
+```bash
+pip install --upgrade librosa soundfile
+```
+
+**Problem: Permission Error**
+```bash
+pip install --user -r requirements.txt
+```
