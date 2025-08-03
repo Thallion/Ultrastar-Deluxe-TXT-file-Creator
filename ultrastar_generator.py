@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-UltraStar Deluxe Karaoke File Generator
-Erstellt .txt Dateien aus MP3 und Lyrics - FIXED VERSION
+UltraStar Deluxe Karaoke File Generator - Überarbeitete Version
+Basierend auf Analyse von funktionierenden UltraStar-Dateien
 """
 
 import os
@@ -14,457 +14,412 @@ import re
 import warnings
 warnings.filterwarnings("ignore")
 
+# Versuche erweiterte Vocal-Separation zu laden
+try:
+    from vocal_separator import integrate_vocal_separator, VocalSeparator
+    ADVANCED_VOCAL_SEPARATION = True
+except ImportError:
+    ADVANCED_VOCAL_SEPARATION = False
+    print("ℹ️  Erweiterte Vocal-Separation nicht verfügbar")
+    print("   Für bessere Ergebnisse: pip install demucs")
+
 class UltraStarGenerator:
     def __init__(self, output_dir: str = "output"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
-        # UltraStar Format Konstanten (angepasst für Vocals)
+        # UltraStar Format Konstanten (angepasst basierend auf Beispieldateien)
         self.SAMPLE_RATE = 22050
         self.HOP_LENGTH = 512
         self.FMIN = 80.0   # Tiefste menschliche Stimme (ca. E2)
         self.FMAX = 800.0  # Höchste menschliche Stimme (ca. G5)
+        
+        # UltraStar spezifische Konstanten
+        self.BEATS_PER_SECOND = 4  # Standard für UltraStar
+        self.MIN_NOTE_DURATION_MS = 100  # Minimale Notendauer in ms
+        self.MIN_NOTE_DURATION_BEATS = 2  # Minimale Notendauer in Beats
     
-    def reverse_engineer_timing(self, original_file: str = None):
+    def analyze_reference_files(self, reference_dir: str = ".") -> Dict:
         """
-        Analysiert funktionierende UltraStar-Datei um korrektes Timing zu verstehen
+        Analysiert UltraStar-Referenzdateien um typische Werte zu lernen
         """
-        if not original_file or not Path(original_file).exists():
-            print("⚠️  Keine Original-Datei zum Reverse Engineering verfügbar")
-            return {'beat_factor': 4, 'timing_verified': False}
+        reference_data = {
+            'bpm_range': [],
+            'gap_range': [],
+            'pitch_range': [],
+            'beat_patterns': []
+        }
         
-        print(f"🔍 Analysiere Original: {Path(original_file).name}")
+        ref_path = Path(reference_dir)
+        for txt_file in ref_path.glob("*.txt"):
+            try:
+                with open(txt_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('#BPM:'):
+                        bpm = float(line.split(':')[1].replace(',', '.'))
+                        reference_data['bpm_range'].append(bpm)
+                    elif line.startswith('#GAP:'):
+                        gap = float(line.split(':')[1].replace(',', '.'))
+                        reference_data['gap_range'].append(gap)
+                    elif line.startswith((':', '*', 'F', 'R', 'G')):
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            pitch = int(parts[3])
+                            reference_data['pitch_range'].append(pitch)
+            except:
+                continue
         
-        try:
-            with open(original_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            
-            bpm = None
-            gap = None
-            notes = []
-            
-            for line in lines:
-                line = line.strip()
-                if line.startswith('#BPM:'):
-                    bpm = float(line.split(':')[1])
-                elif line.startswith('#GAP:'):
-                    gap = int(line.split(':')[1])
-                elif line.startswith(':'):
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        beat = int(parts[1])
-                        duration = int(parts[2])
-                        pitch = int(parts[3])
-                        notes.append((beat, duration, pitch))
-            
-            if notes and bpm and gap is not None:
-                # Analysiere Beat-Pattern der ersten Noten
-                beats = [n[0] for n in notes[:10]]
-                intervals = np.diff(beats)
-                
-                print(f"📊 Original-Analyse:")
-                print(f"   BPM: {bpm}")
-                print(f"   GAP: {gap}ms")
-                print(f"   Beat-Pattern: {beats[:5]}...")
-                print(f"   Beat-Intervalle: {intervals[:3].tolist()}...")
-                
-                # Schätze Beat-Faktor durch Rückrechnung
-                if len(beats) >= 2:
-                    beat_diff = beats[1] - beats[0]
-                    # Bei BPM=264, GAP=18680 sollte beat_diff ≈ 3 sein
-                    # Das entspricht etwa 450ms bei korrekter Konvertierung
-                    
-                    # Teste verschiedene Faktoren
-                    for factor in [1, 2, 4, 8]:
-                        expected_ms = beat_diff * 60000 / (bpm * factor)
-                        if 200 <= expected_ms <= 1000:  # Plausible Silbendauer
-                            print(f"   Beat-Faktor {factor}: {beat_diff} beats = {expected_ms:.0f}ms")
-                            return {
-                                'bpm': bpm,
-                                'gap': gap,
-                                'beat_factor': factor,
-                                'timing_verified': True
-                            }
-                
-                return {'bpm': bpm, 'gap': gap, 'beat_factor': 4, 'timing_verified': True}
-            
-        except Exception as e:
-            print(f"❌ Reverse Engineering Fehler: {e}")
+        # Statistiken berechnen
+        if reference_data['bpm_range']:
+            print(f"📊 Referenz-Analyse:")
+            print(f"   BPM-Bereich: {min(reference_data['bpm_range']):.1f} - {max(reference_data['bpm_range']):.1f}")
+            print(f"   GAP-Bereich: {min(reference_data['gap_range']):.0f} - {max(reference_data['gap_range']):.0f} ms")
+            if reference_data['pitch_range']:
+                print(f"   Pitch-Bereich: {min(reference_data['pitch_range'])} - {max(reference_data['pitch_range'])}")
         
-        return {'beat_factor': 4, 'timing_verified': False}
+        return reference_data
     
     def separate_vocals(self, audio_path: str) -> Tuple[np.ndarray, float]:
         """
-        Erweiterte Vocal-Separation
+        Verbesserte Vocal-Separation mit Fokus auf Gesangsfrequenzen
         """
         try:
             # Lade Audio
             y, sr = librosa.load(audio_path, sr=self.SAMPLE_RATE)
             
-            # Harmonic-Percussive Separation mit stärkerer Trennung
+            # Harmonic-Percussive Separation
             y_harmonic, y_percussive = librosa.effects.hpss(y, margin=8.0)
             
-            # Spectral Gating für Vocal-Frequenzen
+            # Spektrale Eigenschaften berechnen
             S = librosa.stft(y_harmonic, hop_length=self.HOP_LENGTH)
+            S_power = np.abs(S) ** 2
+            
+            # Mel-Spektrogramm für bessere Vocal-Erkennung
+            mel_spec = librosa.feature.melspectrogram(
+                S=S_power, sr=sr, n_mels=128, fmin=self.FMIN, fmax=self.FMAX
+            )
+            
+            # Vocal-Aktivitätserkennung
+            spectral_rolloff = librosa.feature.spectral_rolloff(S=S_power, sr=sr, roll_percent=0.85)
+            spectral_centroid = librosa.feature.spectral_centroid(S=S_power, sr=sr)
+            
+            # Frequenz-Maske für Vocals
             frequencies = librosa.fft_frequencies(sr=sr, n_fft=S.shape[0]*2-1)
-            
-            # Frequenz-Maske für Vocal-Bereich
             vocal_mask = (frequencies >= self.FMIN) & (frequencies <= self.FMAX)
-            S_vocal = S.copy()
-            S_vocal[~vocal_mask] *= 0.1  # Dämpfe Nicht-Vocal-Bereiche
             
+            # Spektrale Energie in Vocal-Bereich
+            S_vocal = S.copy()
+            S_vocal[~vocal_mask] *= 0.1
+            
+            # Rücktransformation
             vocals = librosa.istft(S_vocal, hop_length=self.HOP_LENGTH)
             
             return vocals, sr
             
         except Exception as e:
             print(f"❌ Vocal-Separation Fehler: {e}")
-            # Fallback: Original Audio
             y, sr = librosa.load(audio_path, sr=self.SAMPLE_RATE)
             return y, sr
     
-    def detect_pitch(self, audio: np.ndarray, sr: float) -> List[Tuple[float, float, float]]:
+    def detect_onsets_and_tempo(self, audio: np.ndarray, sr: float) -> Tuple[np.ndarray, float]:
         """
-        Robuste Pitch-Detection für Vocals
+        Verbesserte Onset-Detection und Tempo-Schätzung
         """
-        try:
-            # Multi-Method Pitch Detection
-            
-            # 1. Piptrack für harmonische Inhalte
-            pitches1, magnitudes1 = librosa.piptrack(
-                y=audio, sr=sr,
-                threshold=0.2,
-                fmin=self.FMIN, fmax=self.FMAX,
-                hop_length=self.HOP_LENGTH
-            )
-            
-            # 2. YIN für Vocal-Pitches (robuster für Sprache/Gesang)
-            try:
-                f0_yin = librosa.yin(audio, fmin=self.FMIN, fmax=self.FMAX, sr=sr, hop_length=self.HOP_LENGTH)
-            except:
-                f0_yin = None
-            
-            # Frame-Zeiten berechnen
-            times = librosa.frames_to_time(
-                np.arange(pitches1.shape[1]), sr=sr, hop_length=self.HOP_LENGTH
-            )
-            
-            pitch_data = []
-            
-            for t_idx, time in enumerate(times):
-                if t_idx >= pitches1.shape[1]:
-                    break
-                    
-                best_freq = 0
-                best_confidence = 0
-                
-                # Piptrack Ergebnis
-                frame_pitches = pitches1[:, t_idx]
-                frame_mags = magnitudes1[:, t_idx]
-                
-                if np.max(frame_mags) > 0:
-                    max_idx = np.argmax(frame_mags)
-                    freq1 = frame_pitches[max_idx]
-                    conf1 = frame_mags[max_idx]
-                    
-                    if freq1 > 0:
-                        best_freq = freq1
-                        best_confidence = conf1
-                
-                # YIN Ergebnis (falls verfügbar)
-                if f0_yin is not None and t_idx < len(f0_yin):
-                    freq2 = f0_yin[t_idx]
-                    if freq2 > 0 and not np.isnan(freq2):
-                        # Kombiniere beide Methoden
-                        if best_freq == 0:
-                            best_freq = freq2
-                            best_confidence = 0.8
-                        elif abs(freq2 - best_freq) / best_freq < 0.1:  # Ähnliche Frequenzen
-                            best_freq = (best_freq + freq2) / 2  # Durchschnitt
-                            best_confidence = min(1.0, best_confidence + 0.3)
-                
-                if best_freq > 0 and best_confidence > 0.15:
-                    pitch_data.append((time, best_freq, best_confidence))
-            
-            return pitch_data
-            
-        except Exception as e:
-            print(f"❌ Pitch-Detection Fehler: {e}")
-            return []
+        # Onset Detection mit verschiedenen Methoden
+        onset_frames = librosa.onset.onset_detect(
+            y=audio, sr=sr, hop_length=self.HOP_LENGTH,
+            backtrack=True, pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=0.05
+        )
+        
+        onset_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=self.HOP_LENGTH)
+        
+        # Tempo-Schätzung mit dynamischer Programmierung
+        tempo, beats = librosa.beat.beat_track(
+            y=audio, sr=sr, hop_length=self.HOP_LENGTH, trim=False
+        )
+        
+        # UltraStar verwendet oft höhere BPM-Werte
+        # Analysiere verschiedene Tempo-Multiplikatoren
+        tempo_candidates = []
+        for multiplier in [1, 2, 4, 8]:
+            candidate_bpm = tempo * multiplier
+            if 100 <= candidate_bpm <= 500:  # Typischer UltraStar-Bereich
+                tempo_candidates.append(candidate_bpm)
+        
+        # Wähle BPM im typischen UltraStar-Bereich (200-400)
+        best_bpm = tempo
+        for bpm in tempo_candidates:
+            if 200 <= bpm <= 400:
+                best_bpm = bpm
+                break
+        
+        print(f"🎵 Tempo erkannt: {tempo:.1f} BPM → UltraStar BPM: {best_bpm:.1f}")
+        
+        return onset_times, best_bpm
     
-    def frequency_to_midi(self, frequency: float) -> int:
+    def detect_pitch_advanced(self, audio: np.ndarray, sr: float, onset_times: np.ndarray) -> List[Dict]:
         """
-        Konvertiert Frequenz zu UltraStar MIDI-Note (0-36 Bereich)
+        Fortgeschrittene Pitch-Detection mit Onset-Synchronisation
+        """
+        pitch_data = []
+        
+        # Verwende pYIN für robuste Pitch-Detection
+        f0, voiced_flag, voiced_probs = librosa.pyin(
+            audio, fmin=self.FMIN, fmax=self.FMAX, sr=sr,
+            hop_length=self.HOP_LENGTH, fill_na=0.0
+        )
+        
+        times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=self.HOP_LENGTH)
+        
+        # Segmentiere basierend auf Onsets
+        segments = []
+        for i in range(len(onset_times) - 1):
+            start_time = onset_times[i]
+            end_time = onset_times[i + 1]
+            
+            # Finde Frames im Segment
+            mask = (times >= start_time) & (times < end_time)
+            segment_f0 = f0[mask]
+            segment_probs = voiced_probs[mask] if voiced_probs is not None else np.ones_like(segment_f0)
+            
+            if len(segment_f0) > 0 and np.any(segment_f0 > 0):
+                # Berechne durchschnittliche Frequenz (gewichtet nach Wahrscheinlichkeit)
+                valid_f0 = segment_f0[segment_f0 > 0]
+                valid_probs = segment_probs[segment_f0 > 0]
+                
+                if len(valid_f0) > 0:
+                    avg_freq = np.average(valid_f0, weights=valid_probs)
+                    confidence = np.mean(valid_probs)
+                    
+                    pitch_data.append({
+                        'start_time': start_time,
+                        'duration': end_time - start_time,
+                        'frequency': avg_freq,
+                        'confidence': confidence
+                    })
+        
+        return pitch_data
+    
+    def frequency_to_ultrastar_pitch(self, frequency: float) -> int:
+        """
+        Konvertiert Frequenz zu UltraStar Pitch (typisch -10 bis +40)
+        Basierend auf Analyse der Beispieldateien
         """
         if frequency <= 0:
             return 0
         
-        # Standard MIDI-Konvertierung
-        midi_standard = 69 + 12 * np.log2(frequency / 440.0)
+        # MIDI-Note berechnen (A4 = 440Hz = MIDI 69)
+        midi_note = 69 + 12 * np.log2(frequency / 440.0)
         
-        # UltraStar verwendet 0-36 Bereich (C3-C6 = MIDI 48-84 → UltraStar 0-36)
-        ultrastar_note = int(round(midi_standard - 48))
+        # UltraStar verwendet relative Tonhöhen um C4 (MIDI 60)
+        # Bereich typisch -10 bis +40
+        ultrastar_pitch = int(round(midi_note - 60))
         
-        # Begrenze auf UltraStar-Bereich
-        return max(0, min(36, ultrastar_note))
+        # Begrenze auf typischen UltraStar-Bereich
+        return max(-10, min(40, ultrastar_pitch))
     
-    def smooth_pitch_data(self, pitch_data: List[Tuple[float, float, float]], 
-                         min_duration: float = 0.4) -> List[Tuple[float, float, int]]:
+    def ms_to_beats(self, time_ms: float, bpm: float, gap_ms: float = 0) -> int:
         """
-        Glättet Pitch-Daten zu stabilen Noten (weniger, aber bessere Noten)
+        Konvertiert Zeit in Millisekunden zu UltraStar Beats
         """
-        if not pitch_data:
-            return []
+        # UltraStar Beat-Formel
+        beats_per_minute = bpm
+        ms_per_beat = 60000.0 / beats_per_minute
         
-        # Filtere nur starke Pitches (höherer Threshold)
-        filtered_data = [(t, f, c) for t, f, c in pitch_data if c > 0.25]
+        # Zeit relativ zum GAP
+        relative_time_ms = time_ms - gap_ms
         
-        if not filtered_data:
-            return []
+        if relative_time_ms < 0:
+            return 0
         
-        notes = []
-        current_group = []
-        
-        for time, freq, confidence in filtered_data:
-            midi_note = self.frequency_to_midi(freq)
-            
-            if not current_group:
-                current_group = [(time, freq, midi_note, confidence)]
-            else:
-                last_time = current_group[-1][0]
-                last_midi = current_group[-1][2]
-                
-                # Neue Note wenn Zeit-Lücke > 300ms oder Pitch-Unterschied > 2 Halbtöne
-                if (time - last_time > 0.3 or abs(midi_note - last_midi) > 2):
-                    # Finalisiere vorherige Gruppe
-                    note = self.finalize_note_group(current_group, min_duration)
-                    if note:
-                        notes.append(note)
-                    
-                    # Starte neue Gruppe
-                    current_group = [(time, freq, midi_note, confidence)]
-                else:
-                    current_group.append((time, freq, midi_note, confidence))
-        
-        # Letzte Gruppe
-        if current_group:
-            note = self.finalize_note_group(current_group, min_duration)
-            if note:
-                notes.append(note)
-        
-        print(f"🎵 Note-Optimierung: {len(filtered_data)} Pitches → {len(notes)} Noten")
-        return notes
+        beats = relative_time_ms / ms_per_beat
+        return max(0, int(round(beats)))
     
-    def finalize_note_group(self, group: List[Tuple[float, float, int, float]], 
-                           min_duration: float) -> Optional[Tuple[float, float, int]]:
+    def duration_to_beats(self, duration_ms: float, bpm: float) -> int:
         """
-        Erstellt finale Note aus Pitch-Gruppe
+        Konvertiert Dauer in Millisekunden zu Beats
         """
-        if not group:
-            return None
-        
-        times = [p[0] for p in group]
-        midis = [p[2] for p in group]
-        confidences = [p[3] for p in group]
-        
-        start_time = min(times)
-        end_time = max(times)
-        duration = end_time - start_time
-        
-        # Prüfe Mindestdauer
-        if duration < min_duration:
-            return None
-        
-        # Gewichteter Durchschnitt für MIDI-Note
-        weights = np.array(confidences)
-        midi_weighted = np.average(midis, weights=weights)
-        midi_final = max(0, min(36, int(round(midi_weighted))))
-        
-        return (start_time, duration, midi_final)
-    
-    def estimate_bpm(self, audio: np.ndarray, sr: float) -> float:
-        """
-        Robuste BPM-Detection mit Fokus auf UltraStar-typische Werte
-        """
-        try:
-            # Standard Beat-Tracking
-            tempo1, beats = librosa.beat.beat_track(y=audio, sr=sr, hop_length=self.HOP_LENGTH)
-            
-            # Onset-basierte BPM
-            onsets = librosa.onset.onset_detect(y=audio, sr=sr, hop_length=self.HOP_LENGTH, units='time')
-            tempo2 = 120.0
-            
-            if len(onsets) > 10:
-                intervals = np.diff(onsets)
-                valid_intervals = intervals[(intervals > 0.2) & (intervals < 3.0)]
-                if len(valid_intervals) > 5:
-                    tempo2 = 60.0 / np.median(valid_intervals)
-            
-            print(f"🎯 BPM-Kandidaten: librosa={tempo1:.1f}, onset={tempo2:.1f}")
-            
-            # Teste alle sinnvollen Multiplikatoren
-            candidates = []
-            for base_tempo in [tempo1, tempo2]:
-                for multiplier in [0.25, 0.5, 1.0, 2.0, 4.0]:
-                    candidate = base_tempo * multiplier
-                    if 60 <= candidate <= 400:
-                        candidates.append(candidate)
-            
-            # Bewerte Kandidaten
-            best_bpm = tempo1
-            best_score = -1
-            
-            for bpm in candidates:
-                score = 0
-                
-                # Bevorzuge typische Bereiche
-                if 120 <= bpm <= 140:
-                    score += 10  # Balladen
-                elif 140 <= bpm <= 180:
-                    score += 15  # Standard Pop
-                elif 180 <= bpm <= 220:
-                    score += 20  # Uptempo
-                elif 220 <= bpm <= 280:
-                    score += 25  # Sehr schnell (Let It Go Bereich)
-                
-                # Spezial-Bonus für Let It Go Bereich
-                if 250 <= bpm <= 270:
-                    score += 20
-                
-                # Bonus für "runde" Werte
-                if bpm % 10 == 0:
-                    score += 5
-                
-                if score > best_score:
-                    best_score = score
-                    best_bpm = bpm
-            
-            print(f"🎯 Gewähltes BPM: {best_bpm:.1f} (Score: {best_score})")
-            return float(best_bpm)
-            
-        except Exception as e:
-            print(f"❌ BPM-Detection Fehler: {e}")
-            return 264.0  # Let It Go Fallback
+        ms_per_beat = 60000.0 / bpm
+        beats = duration_ms / ms_per_beat
+        return max(self.MIN_NOTE_DURATION_BEATS, int(round(beats)))
     
     def parse_lyrics(self, lyrics_path: str) -> List[str]:
         """
-        Parst Lyrics vereinfacht zu Wort-Liste
+        Verbesserte Lyrics-Verarbeitung
         """
-        lyrics = []
+        syllables = []
+        
         try:
             with open(lyrics_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Entferne LRC-Timestamps
+            # Entferne LRC-Timestamps falls vorhanden
             content = re.sub(r'\[\d{2}:\d{2}(?:\.\d{2})?\]', '', content)
             
-            # Teile in Wörter
-            words = content.split()
-            lyrics = [word.strip('.,!?;:') for word in words if word.strip()]
+            # Verarbeite Zeile für Zeile
+            lines = content.strip().split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Teile in Wörter
+                words = line.split()
+                
+                for word in words:
+                    # Entferne Satzzeichen am Ende
+                    word_clean = word.rstrip('.,!?;:')
+                    
+                    # Erkenne Silben (vereinfacht)
+                    # TODO: Bessere Silbentrennung implementieren
+                    if len(word_clean) <= 3:
+                        syllables.append(word_clean)
+                    elif len(word_clean) <= 6:
+                        # Teile in 2 Silben
+                        mid = len(word_clean) // 2
+                        syllables.append(word_clean[:mid])
+                        syllables.append(word_clean[mid:])
+                    else:
+                        # Teile in 3 Silben
+                        third = len(word_clean) // 3
+                        syllables.append(word_clean[:third])
+                        syllables.append(word_clean[third:third*2])
+                        syllables.append(word_clean[third*2:])
             
         except Exception as e:
-            print(f"❌ Lyrics-Fehler: {e}")
+            print(f"❌ Lyrics-Parsing Fehler: {e}")
         
-        return lyrics
+        return syllables
     
-    def time_to_beats(self, time_seconds: float, bpm: float, gap_ms: int, beat_factor: int = 4) -> int:
+    def create_notes_from_pitch_data(self, pitch_data: List[Dict], bpm: float, gap_ms: float) -> List[Dict]:
         """
-        KORREKTE UltraStar Beat-Konvertierung basierend auf Reverse Engineering
+        Erstellt UltraStar-Noten aus Pitch-Daten
         """
-        time_ms = time_seconds * 1000
+        notes = []
         
-        if time_ms <= gap_ms:
-            return 0
+        for pitch_info in pitch_data:
+            start_time_ms = pitch_info['start_time'] * 1000
+            duration_ms = pitch_info['duration'] * 1000
+            
+            # Filtere zu kurze Noten
+            if duration_ms < self.MIN_NOTE_DURATION_MS:
+                continue
+            
+            # Konvertiere zu Beats
+            start_beat = self.ms_to_beats(start_time_ms, bpm, gap_ms)
+            duration_beats = self.duration_to_beats(duration_ms, bpm)
+            
+            # Konvertiere Pitch
+            pitch = self.frequency_to_ultrastar_pitch(pitch_info['frequency'])
+            
+            # Bestimme Note-Typ basierend auf Confidence
+            note_type = ':' # Normal
+            if pitch_info['confidence'] > 0.8 and duration_beats > 6:
+                note_type = '*'  # Golden note für lange, stabile Töne
+            
+            notes.append({
+                'type': note_type,
+                'beat': start_beat,
+                'duration': duration_beats,
+                'pitch': pitch,
+                'confidence': pitch_info['confidence']
+            })
         
-        # Korrekte UltraStar Formel (reverse engineered):
-        # Beat = (Zeit_ms - GAP) * BPM / (60000 / beat_factor)
-        beats = (time_ms - gap_ms) * bpm / (60000 / beat_factor)
+        # Sortiere nach Beat
+        notes.sort(key=lambda x: x['beat'])
         
-        return max(0, int(round(beats)))
+        # Füge Pausen ein
+        notes_with_pauses = []
+        last_end_beat = 0
+        
+        for note in notes:
+            # Füge Pause ein wenn Lücke > 8 Beats
+            if note['beat'] - last_end_beat > 8:
+                notes_with_pauses.append({
+                    'type': '-',
+                    'beat': last_end_beat + 2
+                })
+            
+            notes_with_pauses.append(note)
+            last_end_beat = note['beat'] + note['duration']
+        
+        return notes_with_pauses
+    
+    def assign_lyrics_to_notes(self, notes: List[Dict], lyrics: List[str]) -> List[Dict]:
+        """
+        Intelligente Zuordnung von Lyrics zu Noten
+        """
+        vocal_notes = [n for n in notes if n['type'] != '-']
+        lyrics_index = 0
+        
+        for note in notes:
+            if note['type'] == '-':
+                continue
+            
+            if lyrics_index < len(lyrics):
+                note['text'] = lyrics[lyrics_index]
+                lyrics_index += 1
+            else:
+                # Verwende Tilde für gehaltene Töne
+                note['text'] = '~'
+        
+        return notes
     
     def generate_ultrastar_file(self, 
-                              notes: List[Tuple[float, float, int]],
-                              lyrics: List[str],
+                              notes: List[Dict],
                               title: str,
                               artist: str,
                               audio_filename: str,
                               bpm: float,
-                              beat_factor: int = 4) -> str:
+                              gap_ms: float,
+                              end_ms: Optional[float] = None) -> str:
         """
-        Generiert UltraStar .txt Datei mit korrektem Timing
+        Generiert UltraStar .txt Datei
         """
         if not notes:
             print("❌ Keine Noten zum Verarbeiten!")
             return ""
         
-        output_file = self.output_dir / f"{title} - {artist}.txt"
+        output_file = self.output_dir / f"{artist} - {title}.txt"
         
-        # Berechne GAP = Zeit bis zur ersten Note
-        first_note_time = notes[0][0]
-        gap_ms = max(0, int(first_note_time * 1000) - 500)  # 500ms früher starten
-        
-        print(f"🕐 GAP berechnet: {gap_ms}ms (erste Note bei {first_note_time:.1f}s)")
-        
-        # Konvertiere zu Beats
-        beat_notes = []
-        for start_time, duration, midi in notes:
-            start_beat = self.time_to_beats(start_time, bpm, gap_ms, beat_factor)
-            duration_beats = max(1, self.time_to_beats(duration, bpm, 0, beat_factor))
-            beat_notes.append((start_beat, duration_beats, midi))
-        
-        # Sortiere und validiere
-        beat_notes = [(s, d, m) for s, d, m in beat_notes if s >= 0]
-        beat_notes.sort(key=lambda x: x[0])
-        
-        if not beat_notes:
-            print("❌ Keine gültigen Beat-Noten!")
-            return ""
-        
-        print(f"🎼 Beat-Bereich: {beat_notes[0][0]} bis {beat_notes[-1][0]}")
-        
-        # End-Zeit berechnen
-        last_note = notes[-1]
-        end_time_ms = int((last_note[0] + last_note[1]) * 1000)
+        # Berechne End-Zeit wenn nicht angegeben
+        if end_ms is None:
+            last_vocal_note = max([n for n in notes if n['type'] != '-'], 
+                                 key=lambda x: x['beat'] + x.get('duration', 0))
+            end_beat = last_vocal_note['beat'] + last_vocal_note.get('duration', 0)
+            ms_per_beat = 60000.0 / bpm
+            end_ms = gap_ms + (end_beat * ms_per_beat) + 2000  # +2 Sekunden Buffer
         
         with open(output_file, 'w', encoding='utf-8') as f:
             # Header
-            f.write(f"#TITLE:{title}\n")
             f.write(f"#ARTIST:{artist}\n")
+            f.write(f"#TITLE:{title}\n")
             f.write(f"#MP3:{audio_filename}\n")
-            f.write(f"#BPM:{bpm:.1f}\n")
-            f.write(f"#GAP:{gap_ms}\n")
-            f.write(f"#END:{end_time_ms}\n")
+            f.write(f"#BPM:{bpm:.2f}\n")
+            f.write(f"#GAP:{int(gap_ms)}\n")
+            f.write(f"#VIDEO:{Path(audio_filename).stem}.mp4\n")
+            f.write(f"#CREATOR:UltraStar Generator\n")
+            f.write(f"#LANGUAGE:Unknown\n")
+            f.write(f"#YEAR:2024\n")
+            f.write(f"#END:{int(end_ms)}\n")
             f.write("\n")
             
-            # Noten mit Lyrics
-            lyrics_index = 0
-            last_beat = 0
+            # Noten
+            for note in notes:
+                if note['type'] == '-':
+                    f.write(f"- {note['beat']}\n")
+                else:
+                    text = note.get('text', '~')
+                    f.write(f"{note['type']} {note['beat']} {note['duration']} {note['pitch']} {text}\n")
             
-            for i, (beat, duration, midi) in enumerate(beat_notes):
-                # Pausen für große Lücken
-                if beat - last_beat > 10:
-                    f.write(f"- {last_beat + 1}\n")
-                
-                # Text zuweisen
-                text = ""
-                if lyrics_index < len(lyrics):
-                    text = lyrics[lyrics_index]
-                    lyrics_index += 1
-                elif i % 20 == 0:  # Sporadische Tilden
-                    text = "~"
-                
-                # Note-Type
-                note_type = "*" if duration > 6 or midi > 25 else ":"
-                
-                # Schreibe Note (nur wenn Text vorhanden)
-                if text:
-                    f.write(f"{note_type} {beat} {duration} {midi} {text}\n")
-                
-                last_beat = beat + duration
-            
+            # Ende
             f.write("E\n")
         
-        print(f"🎵 UltraStar-Datei erstellt: {output_file}")
+        print(f"✅ UltraStar-Datei erstellt: {output_file}")
         return str(output_file)
     
     def process_files(self, audio_path: str, lyrics_path: str = None, 
@@ -473,71 +428,77 @@ class UltraStarGenerator:
         """
         Hauptprozess: Audio + Lyrics zu UltraStar Datei
         """
-        print("🎵 UltraStar Generation - FIXED VERSION")
+        print("🎵 UltraStar Generation - Überarbeitete Version")
         print("=" * 50)
         
         # Dateinamen extrahieren falls nicht angegeben
         audio_file = Path(audio_path)
         if not title:
-            title = audio_file.stem
+            title = audio_file.stem.split(' - ')[-1] if ' - ' in audio_file.stem else audio_file.stem
         if not artist:
-            artist = "Unknown Artist"
+            artist = audio_file.stem.split(' - ')[0] if ' - ' in audio_file.stem else "Unknown Artist"
         
-        print(f"🎵 Titel: {title} - {artist}")
+        print(f"🎵 Titel: {title}")
+        print(f"🎤 Artist: {artist}")
         
-        # Reverse Engineering (falls Referenz verfügbar)
-        timing_info = self.reverse_engineer_timing(reference_file)
-        beat_factor = timing_info.get('beat_factor', 4)
+        # Analysiere Referenzdateien
+        self.analyze_reference_files(audio_file.parent)
         
         # 1. Vocals separieren
-        print("🎤 Separiere Vocals...")
+        print("\n🎤 Separiere Vocals...")
         vocals, sr = self.separate_vocals(audio_path)
         
-        # 2. BPM schätzen
-        print("🥁 Schätze BPM...")
-        bpm = self.estimate_bpm(vocals, sr)
+        # 2. Onset Detection und Tempo
+        print("🥁 Erkenne Tempo und Rhythmus...")
+        onset_times, bpm = self.detect_onsets_and_tempo(vocals, sr)
+        print(f"   → {len(onset_times)} Onsets erkannt")
         
         # 3. Pitch Detection
         print("🎼 Erkenne Tonhöhen...")
-        pitch_data = self.detect_pitch(vocals, sr)
+        pitch_data = self.detect_pitch_advanced(vocals, sr, onset_times)
+        print(f"   → {len(pitch_data)} Pitch-Segmente erkannt")
+        
         if not pitch_data:
             print("❌ Keine Tonhöhen erkannt!")
             return None
         
-        print(f"✅ {len(pitch_data)} Pitch-Punkte erkannt")
+        # 4. GAP berechnen (Zeit bis zur ersten Note)
+        first_note_ms = pitch_data[0]['start_time'] * 1000
+        gap_ms = max(0, first_note_ms - 500)  # 500ms Vorlauf
         
-        # 4. Pitch-Daten glätten
-        print("🎯 Extrahiere Noten...")
-        notes = self.smooth_pitch_data(pitch_data)
-        if not notes:
-            print("❌ Keine Noten extrahiert!")
-            return None
+        print(f"\n📊 Timing-Parameter:")
+        print(f"   BPM: {bpm:.2f}")
+        print(f"   GAP: {gap_ms:.0f} ms")
         
-        print(f"✅ {len(notes)} Noten extrahiert")
+        # 5. Erstelle Noten
+        print("\n🎯 Erstelle Noten...")
+        notes = self.create_notes_from_pitch_data(pitch_data, bpm, gap_ms)
+        print(f"   → {len([n for n in notes if n['type'] != '-'])} Noten erstellt")
         
-        # 5. Lyrics laden
-        lyrics = []
+        # 6. Lyrics laden und zuordnen
         if lyrics_path and Path(lyrics_path).exists():
-            print("📝 Lade Lyrics...")
+            print("\n📝 Lade und verarbeite Lyrics...")
             lyrics = self.parse_lyrics(lyrics_path)
-            print(f"✅ {len(lyrics)} Wörter geladen")
+            print(f"   → {len(lyrics)} Silben extrahiert")
+            notes = self.assign_lyrics_to_notes(notes, lyrics)
         
-        # 6. UltraStar Datei generieren
-        print("📄 Generiere UltraStar Datei...")
+        # 7. UltraStar Datei generieren
+        print("\n📄 Generiere UltraStar Datei...")
+        
+        # Audio-Dauer für END-Tag
+        audio_duration_s = librosa.get_duration(y=vocals, sr=sr)
+        end_ms = audio_duration_s * 1000
+        
         ultrastar_file = self.generate_ultrastar_file(
-            notes, lyrics, title, artist, audio_file.name, bpm, beat_factor
+            notes, title, artist, audio_file.name, bpm, gap_ms, end_ms
         )
         
         if ultrastar_file:
-            print(f"🎉 Erfolgreich!")
-            
-            # Finale Statistiken
-            print(f"\n📊 Statistiken:")
-            print(f"   - BPM: {bpm:.1f}")
-            print(f"   - Beat-Faktor: {beat_factor}")
-            print(f"   - Noten: {len(notes)}")
-            print(f"   - Lyrics: {len(lyrics)}")
-            print(f"   - Dauer: {notes[-1][0] + notes[-1][1]:.1f}s")
+            print("\n🎉 Erfolgreich abgeschlossen!")
+            print(f"\n💡 Nächste Schritte:")
+            print(f"1. Kopiere die .txt und .mp3 Datei in deinen UltraStar Songs-Ordner")
+            print(f"2. Öffne die Datei im UltraStar Creator für Feinabstimmung")
+            print(f"3. Füge ggf. Video, Cover und Background hinzu")
             
             return ultrastar_file
         
@@ -545,12 +506,22 @@ class UltraStarGenerator:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='UltraStar Deluxe Karaoke Generator')
+    parser = argparse.ArgumentParser(
+        description='UltraStar Deluxe Karaoke Generator - Überarbeitete Version',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Beispiele:
+  python ultrastar_generator.py song.mp3
+  python ultrastar_generator.py song.mp3 --lyrics lyrics.txt
+  python ultrastar_generator.py "Artist - Title.mp3" --lyrics lyrics.txt
+  python ultrastar_generator.py song.mp3 --title "My Song" --artist "Artist Name"
+        """
+    )
+    
     parser.add_argument('audio', help='Audio-Datei (MP3, WAV, etc.)')
     parser.add_argument('--lyrics', '-l', help='Lyrics-Datei (TXT, LRC)')
-    parser.add_argument('--title', '-t', help='Song-Titel')
-    parser.add_argument('--artist', '-a', help='Künstler')
-    parser.add_argument('--reference', '-r', help='Referenz UltraStar-Datei für Timing-Analyse')
+    parser.add_argument('--title', '-t', help='Song-Titel (Standard: aus Dateiname)')
+    parser.add_argument('--artist', '-a', help='Künstler (Standard: aus Dateiname)')
     parser.add_argument('--output', '-o', default='output', help='Output-Verzeichnis')
     
     args = parser.parse_args()
@@ -559,23 +530,32 @@ def main():
         print(f"❌ Audio-Datei nicht gefunden: {args.audio}")
         return
     
-    generator = UltraStarGenerator(args.output)
+    # Verwende erweiterte Vocal-Separation wenn verfügbar
+    if ADVANCED_VOCAL_SEPARATION:
+        GeneratorClass = integrate_vocal_separator(UltraStarGenerator)
+        print("✨ Verwende erweiterte Vocal-Separation")
+    else:
+        GeneratorClass = UltraStarGenerator
+    
+    generator = GeneratorClass(args.output)
     result = generator.process_files(
         args.audio, 
         args.lyrics, 
         args.title, 
-        args.artist,
-        args.reference
+        args.artist
     )
     
     if result:
-        print(f"\n✨ Erfolgreich! UltraStar Datei: {result}")
-        print("\n💡 Tipps:")
-        print("- Verwende --reference mit einer funktionierenden UltraStar-Datei für besseres Timing")
-        print("- Überprüfe Timing und Tonhöhen im UltraStar Editor")
-        print("- Bei schlechter Qualität: bessere Vocal-Separation mit Spleeter verwenden")
+        print(f"\n✨ UltraStar Datei erstellt: {result}")
     else:
         print("\n❌ Fehler bei der Generierung!")
+        print("\n💡 Tipps für bessere Ergebnisse:")
+        print("- Verwende hochwertige Audio-Dateien (MP3 320kbps oder WAV)")
+        print("- Stelle sicher, dass Gesang deutlich hörbar ist")
+        print("- Verwende Songs mit klarer Melodie")
+        print("- Füge eine Lyrics-Datei hinzu für bessere Text-Synchronisation")
+        if not ADVANCED_VOCAL_SEPARATION:
+            print("- Installiere 'demucs' für bessere Vocal-Separation: pip install demucs")
 
 
 if __name__ == "__main__":

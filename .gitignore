@@ -18,6 +18,10 @@ test_units/
 .cache
 .pytest_cache/
 
+# Output
+output/
+originals/
+
 # Environments
 .env
 .venv
@@ -26,6 +30,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+ultrastar_env
 
 # VS Code
 .vscode/
@@ -41,10 +46,5 @@ Desktop.ini
 *.log
 
 # Lokale Konfigurationsdateien
-config.local.ini
-settings.local.json
-custom_fertigkeiten.json
-custom_handicaps.json
-custom_maechte.json
 cxfreeze.txt
 setup.py
