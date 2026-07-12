@@ -1,7 +1,8 @@
+# start.py
 #!/usr/bin/env python3
 """
 UltraStar Generator - Launcher Script
-Überprüft Dependencies und startet die Anwendung
+Überprüft Dependencies und startet die Anwendung mit DDD/MVC Architektur
 """
 
 import sys
@@ -9,7 +10,8 @@ import subprocess
 import importlib.util
 from pathlib import Path
 
-def check_dependency(package_name, import_name=None):
+
+def check_dependency(package_name: str, import_name: str = None) -> bool:
     """Überprüft ob ein Package installiert ist"""
     if import_name is None:
         import_name = package_name
@@ -17,79 +19,71 @@ def check_dependency(package_name, import_name=None):
     spec = importlib.util.find_spec(import_name)
     return spec is not None
 
-def install_requirements():
+
+def check_project_structure() -> bool:
+    """Überprüft ob die neue Projektstruktur vorhanden ist"""
+    required_dirs = [
+        'domain',
+        'application', 
+        'infrastructure',
+        'presentation',
+        'config'
+    ]
+    
+    missing_dirs = []
+    for dir_name in required_dirs:
+        if not Path(dir_name).exists():
+            missing_dirs.append(dir_name)
+    
+    if missing_dirs:
+        print(f"❌ Fehlende Verzeichnisse: {', '.join(missing_dirs)}")
+        print("\n💡 Die Projektstruktur wurde nach DDD/MVC refactored.")
+        print("   Bitte stelle sicher, dass alle Verzeichnisse vorhanden sind.")
+        return False
+    
+    return True
+
+
+def install_requirements() -> bool:
     """Installiert Requirements automatisch"""
     print("📦 Installiere fehlende Dependencies...")
     
-    # Prüfe auf externally-managed-environment (Ubuntu 24.04+)
-    try:
-        result = subprocess.run([sys.executable, "-m", "pip", "install", "--dry-run", "numpy"], 
-                              capture_output=True, text=True)
-        if "externally-managed-environment" in result.stderr:
-            print("\n⚠️  Externally-managed-environment erkannt (Ubuntu/Debian)")
-            print("💡 Verwende das Linux-Setup-Script:")
-            print("   bash linux_setup.sh")
-            print("\n   Oder erstelle manuell eine Virtual Environment:")
-            print("   python3 -m venv ultrastar_env")
-            print("   source ultrastar_env/bin/activate")
-            print("   pip install librosa numpy kivymd kivy")
-            return False
-    except:
-        pass
-    
     requirements = [
-        "librosa",
-        "numpy", 
-        "kivymd",
-        "kivy"
+        "librosa>=0.10.0",
+        "numpy>=1.21.0",
+        "scipy>=1.7.0",
+        "soundfile>=0.12.0",
+        "kivymd>=1.1.1",
+        "kivy>=2.1.0"
     ]
     
     try:
         for req in requirements:
-            if not check_dependency(req):
-                print(f"   Installiere {req}...")
+            package_name = req.split('>=')[0]
+            if not check_dependency(package_name):
+                print(f"   Installiere {package_name}...")
                 subprocess.check_call([sys.executable, "-m", "pip", "install", req])
         
         print("✅ Alle Dependencies installiert!")
         return True
         
     except subprocess.CalledProcessError as e:
-        if "externally-managed-environment" in str(e):
-            print("\n⚠️  Installation blockiert - Externally-managed-environment")
-            print("💡 Lösung für Ubuntu/Debian:")
-            print("   1. Verwende: bash linux_setup.sh")
-            print("   2. Oder: python3 -m venv ultrastar_env && source ultrastar_env/bin/activate")
-        else:
-            print(f"❌ Installation fehlgeschlagen: {e}")
+        print(f"❌ Installation fehlgeschlagen: {e}")
         return False
 
-def check_files():
-    """Überprüft ob alle notwendigen Dateien vorhanden sind"""
-    required_files = [
-        "ultrastar_generator.py",
-        "ultrastar_gui.py"
-    ]
-    
-    missing_files = []
-    for file in required_files:
-        if not Path(file).exists():
-            missing_files.append(file)
-    
-    if missing_files:
-        print(f"❌ Fehlende Dateien: {', '.join(missing_files)}")
-        return False
-    
-    return True
 
 def main():
     """Hauptfunktion"""
-    print("🎵 UltraStar Deluxe Karaoke Generator")
-    print("=" * 40)
+    print("🎵 UltraStar Deluxe Karaoke Generator - Clean Architecture Edition")
+    print("=" * 60)
     
-    # 1. Dateien überprüfen
-    if not check_files():
-        print("\n💡 Stelle sicher, dass alle Python-Dateien im gleichen Verzeichnis sind!")
-        input("Drücke Enter zum Beenden...")
+    # 1. Projektstruktur überprüfen
+    if not check_project_structure():
+        print("\n💡 Migrationshinweis:")
+        print("   Die alte Struktur (ultrastar_generator.py, ultrastar_gui.py)")
+        print("   wurde durch eine saubere DDD/MVC Architektur ersetzt.")
+        print("\n   Verwende stattdessen: python main.py")
+        input("\nDrücke Enter zum Beenden...")
         return
     
     # 2. Dependencies überprüfen
@@ -97,6 +91,8 @@ def main():
     deps_to_check = [
         ("librosa", "librosa"),
         ("numpy", "numpy"),
+        ("scipy", "scipy"),
+        ("soundfile", "soundfile"),
         ("kivymd", "kivymd"),
         ("kivy", "kivy")
     ]
@@ -112,16 +108,13 @@ def main():
         if response in ['j', 'ja', 'y', 'yes']:
             success = install_requirements()
             if not success:
-                print("\n💡 Alternative Installationsmethoden:")
-                print("   1. Linux-Setup verwenden: bash linux_setup.sh")
-                print("   2. Virtual Environment: python3 -m venv venv && source venv/bin/activate")
-                print("   3. pipx verwenden: pipx install <package>")
+                print("\n💡 Alternative:")
+                print("   pip install -r requirements.txt")
                 input("Drücke Enter zum Beenden...")
                 return
         else:
             print("\n💡 Installiere Dependencies manuell:")
-            print("   Ubuntu/Debian: bash linux_setup.sh")
-            print("   Andere: pip install librosa numpy kivymd kivy")
+            print("   pip install -r requirements.txt")
             input("Drücke Enter zum Beenden...")
             return
     
@@ -137,8 +130,8 @@ def main():
         if choice == "1":
             print("\n🖥️  Starte GUI...")
             try:
-                import ultrastar_gui
-                ultrastar_gui.UltraStarApp().run()
+                from main import run_gui
+                run_gui()
             except Exception as e:
                 print(f"❌ GUI-Fehler: {e}")
                 print("\n💡 Versuche CLI-Modus oder prüfe Dependencies")
@@ -147,10 +140,15 @@ def main():
         
         elif choice == "2":
             print("\n⌨️  CLI-Modus")
-            print("Verwendung: python ultrastar_generator.py <audio_file> [--lyrics lyrics.txt] [--reference original.txt]")
+            print("Verwendung: python main.py <audio_file> [options]")
             print("\nBeispiele:")
-            print("python ultrastar_generator.py song.mp3 --lyrics lyrics.txt --title 'My Song' --artist 'Artist'")
-            print("python ultrastar_generator.py song.mp3 --lyrics lyrics.txt --reference original.txt")
+            print("  python main.py song.mp3 --lyrics lyrics.txt --title 'My Song' --artist 'Artist'")
+            print("  python main.py song.mp3 -l lyrics.txt -t 'My Song' -a 'Artist'")
+            print("\nOptionen:")
+            print("  --lyrics, -l   : Lyrics-Datei (optional)")
+            print("  --title, -t    : Song-Titel (optional)")
+            print("  --artist, -a   : Künstler (optional)")
+            print("  --output, -o   : Output-Pfad (optional)")
             input("\nDrücke Enter zum Beenden...")
             break
         
@@ -159,8 +157,8 @@ def main():
             break
         
         else:
-            print("❌ Ungültige Auswahl. Bitte 1, 2 oder 3" \
-            "eingeben.")
+            print("❌ Ungültige Auswahl. Bitte 1, 2 oder 3 eingeben.")
+
 
 if __name__ == "__main__":
     try:
